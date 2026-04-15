@@ -25,12 +25,14 @@ app.use(express.json());
 ════════════════════════════════════════════════════ */
 app.post('/api/upload', upload.fields([
   { name: 'image', maxCount: 1 },
-  { name: 'model', maxCount: 1 }
+  { name: 'model', maxCount: 1 },
+  { name: 'video', maxCount: 1 }
 ]), async (req, res) => {
   try {
     const { projectId, projectName, targetName, scale, position, rotation } = req.body;
     const imageFile = req.files?.image?.[0];
     const modelFile = req.files?.model?.[0];
+    const videoFile = req.files?.video?.[0];
 
     if (!imageFile || !modelFile) {
       return res.status(400).json({ error: 'Se requieren imagen y modelo' });
@@ -72,6 +74,21 @@ app.post('/api/upload', upload.fields([
       .from('models')
       .getPublicUrl(mdlPath);
 
+    /* ── 3b. Subir video a storage/videos (opcional) ── */
+    let videoUrl = null;
+    if (videoFile) {
+      const vidExt  = videoFile.originalname.split('.').pop();
+      const vidPath = `${pid}/${uuidv4()}.${vidExt}`;
+      const { error: vidErr } = await supabase.storage
+        .from('videos')
+        .upload(vidPath, videoFile.buffer, { contentType: videoFile.mimetype });
+      if (vidErr) throw vidErr;
+      const { data: { publicUrl: vUrl } } = supabase.storage
+        .from('videos')
+        .getPublicUrl(vidPath);
+      videoUrl = vUrl;
+    }
+
     /* ── 4. Contar targets actuales del proyecto para asignar índice ── */
     const { count } = await supabase
       .from('targets')
@@ -89,13 +106,14 @@ app.post('/api/upload', upload.fields([
         model_url:    modelUrl,
         scale:        scale    || '0.3 0.3 0.3',
         position:     position || '0 0 0.1',
-        rotation:     rotation || '0 0 0'
+        rotation:     rotation || '0 0 0',
+        video_url:    videoUrl
       })
       .select('id')
       .single();
     if (tErr) throw tErr;
 
-    res.json({ projectId: pid, targetId: target.id, imageUrl, modelUrl });
+    res.json({ projectId: pid, targetId: target.id, imageUrl, modelUrl, videoUrl });
 
   } catch (err) {
     console.error('[/api/upload]', err);
@@ -123,7 +141,7 @@ app.get('/api/project/:id', async (req, res) => {
     /* Targets ordenados por índice */
     const { data: targets, error: tErr } = await supabase
       .from('targets')
-      .select('target_index, image_url, model_url, mind_url, scale, position, rotation, name')
+      .select('target_index, image_url, model_url, mind_url, video_url, scale, position, rotation, name')
       .eq('project_id', id)
       .order('target_index');
     if (tErr) throw tErr;
@@ -143,7 +161,8 @@ app.get('/api/project/:id', async (req, res) => {
         model_url:   t.model_url,
         scale:       t.scale,
         position:    t.position,
-        rotation:    t.rotation
+        rotation:    t.rotation,
+        video_url:   t.video_url
       }))
     });
 
